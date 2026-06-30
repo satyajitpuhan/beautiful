@@ -1,11 +1,11 @@
 """
 ═══════════════════════════════════════════════════════════════════════
-MATHEMATICAL BIRD — Parametric Surface Formulation  (v7)
+MATHEMATICAL BIRD — Parametric Surface Formulation  (v8 — Vivid)
 ═══════════════════════════════════════════════════════════════════════
 
 Target: A symmetric bird viewed from front-slightly-above.
 Wings form a V-shape (dihedral), curved and swept.
-The surface is rendered as a dense CROSS-HATCH MESH of parametric lines.
+The surface is rendered with GRADIENT COLORING on a dark background.
 
 RULED WING SURFACE:
     S(u, v) = (1−v)·α(u)  +  v·β(u)
@@ -31,6 +31,62 @@ TAIL:
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.colors as mcolors
+from matplotlib.collections import LineCollection
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+# ═══════════════════════════════════════════════════
+#  COLOR PALETTES
+# ═══════════════════════════════════════════════════
+
+# Wing gradient: deep indigo → electric cyan → golden tip
+WING_COLORS = [
+    '#1a0533',  # deep purple root
+    '#2d1b69',  # indigo
+    '#4a2c8a',  # purple
+    '#6b3fa0',  # violet
+    '#8b5cf6',  # bright violet
+    '#7c3aed',  # purple
+    '#6366f1',  # indigo
+    '#3b82f6',  # blue
+    '#06b6d4',  # cyan
+    '#14b8a6',  # teal
+    '#f59e0b',  # amber tip
+    '#f97316',  # orange tip
+]
+
+# Body gradient: dark core → luminous highlights
+BODY_COLORS = [
+    '#1e1b4b',  # deep indigo
+    '#312e81',  # indigo
+    '#4338ca',  # blue-violet
+    '#6366f1',  # indigo
+    '#818cf8',  # light indigo
+]
+
+# Tail gradient: warm spectrum
+TAIL_COLORS = [
+    '#7c2d12',  # deep brown
+    '#9a3412',  # brown-orange
+    '#c2410c',  # orange-red
+    '#ea580c',  # orange
+    '#f59e0b',  # amber
+    '#fbbf24',  # yellow
+    '#fde68a',  # light gold
+]
+
+# Head spike: fiery
+SPIKE_COLORS = [
+    '#4338ca',  # indigo base
+    '#6366f1',  # violet
+    '#a78bfa',  # light violet
+    '#c4b5fd',  # lavender
+    '#ede9fe',  # pale lavender tip
+]
+
+BG_COLOR = '#0a0a1a'        # deep dark blue-black
+BG_COLOR_LIGHT = '#f8fafc'  # for light version
+
 
 # ═══════════════════════════════════════════════════
 #  UTILITY: Cubic Bézier
@@ -54,6 +110,19 @@ def B2(P0, P1, P2, t):
     t3d = t[:, np.newaxis]
     result = (1-t3d)**2*P0 + 2*(1-t3d)*t3d*P1 + t3d**2*P2
     return result[0] if scalar else result
+
+
+def color_lerp(colors, t):
+    """Interpolate through a list of hex colors at parameter t ∈ [0,1]."""
+    t = np.clip(t, 0, 1)
+    n = len(colors) - 1
+    idx = t * n
+    i = int(np.floor(idx))
+    i = min(i, n - 1)
+    frac = idx - i
+    c1 = np.array(mcolors.to_rgb(colors[i]))
+    c2 = np.array(mcolors.to_rgb(colors[i + 1]))
+    return c1 + frac * (c2 - c1)
 
 
 # ═══════════════════════════════════════════════════
@@ -140,150 +209,212 @@ def rmf(gamma):
     return N, B
 
 
-def draw_tube_3d(ax, gamma, r, n_theta=28, lw=0.32, alpha=0.80):
-    """Render S(t,θ) = γ(t) + r(t)·[N cosθ + B sinθ]"""
+def draw_tube_3d(ax, gamma, r, n_theta=28, lw=0.32, alpha=0.80,
+                 colors=None, glow=False):
+    """Render S(t,θ) = γ(t) + r(t)·[N cosθ + B sinθ] with color gradient."""
     if len(gamma) < 3: return
     Nv, Bv = rmf(gamma)
     th = np.linspace(0, 2*np.pi, n_theta)
     ct, st = np.cos(th), np.sin(th)
-    for i in range(len(gamma)):
+    n_pts = len(gamma)
+    for i in range(n_pts):
         if r[i] < 0.003: continue
         ring = gamma[i] + r[i]*(np.outer(ct, Nv[i]) + np.outer(st, Bv[i]))
+        t_param = i / max(n_pts - 1, 1)
+        if colors:
+            c = color_lerp(colors, t_param)
+        else:
+            c = 'white'
         ax.plot(ring[:,0], ring[:,1], ring[:,2],
-                color='black', lw=lw, alpha=alpha)
+                color=c, lw=lw, alpha=alpha)
+        # Glow pass: slightly wider, more transparent
+        if glow:
+            ax.plot(ring[:,0], ring[:,1], ring[:,2],
+                    color=c, lw=lw * 2.5, alpha=alpha * 0.15)
 
 
 # ═══════════════════════════════════════════════════
-#  FIGURE SETUP
+#  RENDER FUNCTION (supports multiple styles)
 # ═══════════════════════════════════════════════════
 
-fig = plt.figure(figsize=(13, 8), facecolor='white')
-ax = fig.add_subplot(111, projection='3d')
-ax.set_axis_off()
+def render_bird(filename, bg_color=BG_COLOR, style='dark',
+                elev=18, azim=-90, figsize=(14, 9)):
+    """Render the full bird with the given style and save to filename."""
 
-LW_WING = 0.25
-ALF_WING = 0.55
+    is_dark = (style == 'dark')
 
+    fig = plt.figure(figsize=figsize, facecolor=bg_color)
+    ax = fig.add_subplot(111, projection='3d', facecolor=bg_color)
+    ax.set_axis_off()
 
-# ═══════════════════════════════════════════════════
-#  DRAW WINGS
-# ═══════════════════════════════════════════════════
+    LW_WING = 0.28 if is_dark else 0.25
+    ALF_WING = 0.65 if is_dark else 0.55
 
-for lead_fn, trail_fn in [
-        (left_leading,  left_trailing),
-        (right_leading, right_trailing)]:
+    # ─── DRAW WINGS ─────────────────────────────────
+    for lead_fn, trail_fn in [
+            (left_leading,  left_trailing),
+            (right_leading, right_trailing)]:
 
-    # Span lines (fixed u, vary v)
-    for u in np.linspace(0, 1, N_SPAN):
-        pts = np.array([surface_pt(u, v, lead_fn, trail_fn) for v in v_vals])
-        ax.plot(pts[:,0], pts[:,1], pts[:,2],
-                color='black', lw=LW_WING, alpha=ALF_WING)
+        # Span lines (fixed u, vary v) — colored by span position
+        for idx, u in enumerate(np.linspace(0, 1, N_SPAN)):
+            pts = np.array([surface_pt(u, v, lead_fn, trail_fn) for v in v_vals])
+            if is_dark:
+                c = color_lerp(WING_COLORS, u)
+                ax.plot(pts[:,0], pts[:,1], pts[:,2],
+                        color=c, lw=LW_WING, alpha=ALF_WING)
+                # Glow layer
+                ax.plot(pts[:,0], pts[:,1], pts[:,2],
+                        color=c, lw=LW_WING * 3, alpha=0.06)
+            else:
+                ax.plot(pts[:,0], pts[:,1], pts[:,2],
+                        color='black', lw=LW_WING, alpha=ALF_WING)
 
-    # Chord lines (fixed v, vary u)
-    for v in np.linspace(0, 1, N_CHORD):
-        pts = np.array([surface_pt(u, v, lead_fn, trail_fn) for u in u_vals])
-        ax.plot(pts[:,0], pts[:,1], pts[:,2],
-                color='black', lw=LW_WING, alpha=ALF_WING)
+        # Chord lines (fixed v, vary u) — colored by chord position
+        for v in np.linspace(0, 1, N_CHORD):
+            pts = np.array([surface_pt(u, v, lead_fn, trail_fn) for u in u_vals])
+            if is_dark:
+                # Color each segment based on its u position
+                for seg_i in range(len(pts) - 1):
+                    u_param = seg_i / max(len(pts) - 2, 1)
+                    c = color_lerp(WING_COLORS, u_param)
+                    ax.plot(pts[seg_i:seg_i+2, 0],
+                            pts[seg_i:seg_i+2, 1],
+                            pts[seg_i:seg_i+2, 2],
+                            color=c, lw=LW_WING * 0.8, alpha=ALF_WING * 0.7)
+            else:
+                ax.plot(pts[:,0], pts[:,1], pts[:,2],
+                        color='black', lw=LW_WING, alpha=ALF_WING)
 
+    # ─── BODY TUBE ──────────────────────────────────
+    N_BODY = 140
+    t_body = np.linspace(0, 1, N_BODY)
 
-# ═══════════════════════════════════════════════════
-#  BODY TUBE  (vertical axis through bird centre)
-#  γ_body(t) = Cubic Bézier from head-top to tail-base
-#  r_body(t) = R0 + A·sin^α(π·t)  — tapered at both ends
-# ═══════════════════════════════════════════════════
+    BH0 = np.array([0.00, 0.00,  0.90])
+    BH1 = np.array([0.00, 0.05,  0.50])
+    BH2 = np.array([0.00, 0.00, -0.15])
+    BH3 = np.array([0.00,-0.05, -0.70])
 
-N_BODY = 140
-t_body = np.linspace(0, 1, N_BODY)
+    gamma_body = B3(BH0, BH1, BH2, BH3, t_body)
+    r_body = 0.06 + 0.28 * np.sin(np.pi * t_body)**1.2
+    r_body = np.maximum(r_body, 0.01)
 
-# Head (z=+) → breast → belly → tail (z=-)
-BH0 = np.array([0.00, 0.00,  0.90])
-BH1 = np.array([0.00, 0.05,  0.50])
-BH2 = np.array([0.00, 0.00, -0.15])
-BH3 = np.array([0.00,-0.05, -0.70])
+    body_cols = BODY_COLORS if is_dark else None
+    draw_tube_3d(ax, gamma_body, r_body, n_theta=38, lw=0.32,
+                 alpha=0.90, colors=body_cols, glow=is_dark)
 
-gamma_body = B3(BH0, BH1, BH2, BH3, t_body)
-r_body = 0.06 + 0.28 * np.sin(np.pi * t_body)**1.2
-r_body = np.maximum(r_body, 0.01)
-draw_tube_3d(ax, gamma_body, r_body, n_theta=38, lw=0.28, alpha=0.90)
+    # ─── HEAD SPIKE ─────────────────────────────────
+    N_SPIKE = 50
+    t_spike = np.linspace(0, 1, N_SPIKE)
 
+    HEAD_TOP  = gamma_body[0].copy()
+    SPIKE_TIP = HEAD_TOP + np.array([0, 0, 0.45])
 
-# ═══════════════════════════════════════════════════
-#  HEAD SPIKE — sharp upward-pointing cone above body
-#    γ_spike(t) = straight line from head-top upward
-#    r_spike(t) = R_spike · (1 − t)^p  → tapers to a point
-# ═══════════════════════════════════════════════════
-
-N_SPIKE = 50
-t_spike = np.linspace(0, 1, N_SPIKE)
-
-HEAD_TOP  = gamma_body[0].copy()
-SPIKE_TIP = HEAD_TOP + np.array([0, 0, 0.45])
-
-gamma_spike = np.column_stack([
-    np.linspace(HEAD_TOP[0], SPIKE_TIP[0], N_SPIKE),
-    np.linspace(HEAD_TOP[1], SPIKE_TIP[1], N_SPIKE),
-    np.linspace(HEAD_TOP[2], SPIKE_TIP[2], N_SPIKE),
-])
-r_spike = 0.10 * (1 - t_spike)**1.4
-r_spike = np.maximum(r_spike, 0.002)
-draw_tube_3d(ax, gamma_spike, r_spike, n_theta=24, lw=0.28, alpha=0.90)
-
-
-# ═══════════════════════════════════════════════════
-#  TAIL FEATHERS  (j = 0 … M−1)
-#  Fan of Quadratic Bézier curves below body.
-#  γⱼ(t) = B₂(tail_base, ctrl_j, tip_j; t)
-#  r_j(t) = R0·(1−t)^β + R_min
-# ═══════════════════════════════════════════════════
-
-M_TAIL = 18
-N_TAIL = 120
-t4 = np.linspace(0, 1, N_TAIL)
-
-TAIL_BASE = gamma_body[-1].copy()  # where body ends
-
-# Tail fans in x-z plane (spreading left/right and downward)
-phi_min_tail = np.radians(200)   # left side
-phi_max_tail = np.radians(340)   # right side
-
-L_TAIL_MID  = 2.2
-L_TAIL_SIDE = 0.80
-
-for j in range(M_TAIL):
-    s_j  = j / (M_TAIL - 1)
-    phi_j = phi_min_tail + s_j * (phi_max_tail - phi_min_tail)
-
-    # length: Gaussian bell centred at 50%
-    L_j = L_TAIL_SIDE + (L_TAIL_MID - L_TAIL_SIDE) * np.sin(np.pi * s_j)
-
-    # tip position: spread in x-z plane
-    tip_j = TAIL_BASE + L_j * np.array([
-        np.cos(phi_j),      # x spread
-        0.0,                # y (depth) unchanged
-        np.sin(phi_j)       # z: predominantly downward
+    gamma_spike = np.column_stack([
+        np.linspace(HEAD_TOP[0], SPIKE_TIP[0], N_SPIKE),
+        np.linspace(HEAD_TOP[1], SPIKE_TIP[1], N_SPIKE),
+        np.linspace(HEAD_TOP[2], SPIKE_TIP[2], N_SPIKE),
     ])
+    r_spike = 0.10 * (1 - t_spike)**1.4
+    r_spike = np.maximum(r_spike, 0.002)
 
-    # control point bows outward in x-z, slightly forward
-    ctrl_j = 0.5*(TAIL_BASE + tip_j) + np.array([
-        0.10 * L_j * np.cos(phi_j + np.pi/2),
-        0.04 * L_j,
-        0.10 * L_j * np.sin(phi_j + np.pi/2),
-    ])
+    spike_cols = SPIKE_COLORS if is_dark else None
+    draw_tube_3d(ax, gamma_spike, r_spike, n_theta=24, lw=0.30,
+                 alpha=0.90, colors=spike_cols, glow=is_dark)
 
-    gamma_j = B2(TAIL_BASE, ctrl_j, tip_j, t4)
+    # ─── TAIL FEATHERS ──────────────────────────────
+    M_TAIL = 18
+    N_TAIL = 120
+    t4 = np.linspace(0, 1, N_TAIL)
 
-    r_j = np.maximum(0.18*(1 - t4)**0.55 + 0.008, 0.005)
-    draw_tube_3d(ax, gamma_j, r_j, n_theta=22, lw=0.30, alpha=0.65)
+    TAIL_BASE = gamma_body[-1].copy()
+
+    phi_min_tail = np.radians(200)
+    phi_max_tail = np.radians(340)
+
+    L_TAIL_MID  = 2.2
+    L_TAIL_SIDE = 0.80
+
+    for j in range(M_TAIL):
+        s_j  = j / (M_TAIL - 1)
+        phi_j = phi_min_tail + s_j * (phi_max_tail - phi_min_tail)
+
+        L_j = L_TAIL_SIDE + (L_TAIL_MID - L_TAIL_SIDE) * np.sin(np.pi * s_j)
+
+        tip_j = TAIL_BASE + L_j * np.array([
+            np.cos(phi_j),
+            0.0,
+            np.sin(phi_j)
+        ])
+
+        ctrl_j = 0.5*(TAIL_BASE + tip_j) + np.array([
+            0.10 * L_j * np.cos(phi_j + np.pi/2),
+            0.04 * L_j,
+            0.10 * L_j * np.sin(phi_j + np.pi/2),
+        ])
+
+        gamma_j = B2(TAIL_BASE, ctrl_j, tip_j, t4)
+
+        r_j = np.maximum(0.18*(1 - t4)**0.55 + 0.008, 0.005)
+
+        # Each tail feather gets a slightly different hue
+        if is_dark:
+            feather_colors = []
+            for tc in TAIL_COLORS:
+                rgb = np.array(mcolors.to_rgb(tc))
+                # Shift hue slightly per feather
+                shift = (s_j - 0.5) * 0.15
+                rgb = np.clip(rgb + shift * np.array([0.1, -0.05, 0.05]), 0, 1)
+                feather_colors.append(mcolors.to_hex(rgb))
+        else:
+            feather_colors = None
+
+        draw_tube_3d(ax, gamma_j, r_j, n_theta=22, lw=0.32,
+                     alpha=0.70, colors=feather_colors, glow=is_dark)
+
+    # ─── CAMERA ─────────────────────────────────────
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_box_aspect([2.2, 0.6, 1.5])
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=350, bbox_inches='tight',
+                facecolor=bg_color, transparent=False)
+    plt.close(fig)
+    print(f"  ✓ Saved: {filename}")
 
 
 # ═══════════════════════════════════════════════════
-#  CAMERA
+#  GENERATE ALL VIEWS
 # ═══════════════════════════════════════════════════
-# elev ~ 15°: slightly above; azim=-90: looking straight from front
-ax.view_init(elev=18, azim=-90)
-ax.set_box_aspect([2.2, 0.6, 1.5])
 
-plt.tight_layout()
-plt.savefig('mathematical_bird.png', dpi=300, bbox_inches='tight',
-            facecolor='white', transparent=False)
-plt.show()
+if __name__ == '__main__':
+    print("╔══════════════════════════════════════════════╗")
+    print("║  MATHEMATICAL BIRD — Rendering Gallery v8   ║")
+    print("╚══════════════════════════════════════════════╝")
+    print()
+
+    # 1. Hero shot — dark mode, front view
+    print("[1/4] Rendering hero shot (dark, front view)...")
+    render_bird('mathematical_bird.png',
+                bg_color=BG_COLOR, style='dark',
+                elev=18, azim=-90, figsize=(14, 9))
+
+    # 2. Three-quarter view — dark mode
+    print("[2/4] Rendering 3/4 view (dark)...")
+    render_bird('bird_three_quarter.png',
+                bg_color=BG_COLOR, style='dark',
+                elev=25, azim=-65, figsize=(14, 9))
+
+    # 3. Top-down view — dark mode
+    print("[3/4] Rendering top-down view (dark)...")
+    render_bird('bird_top_view.png',
+                bg_color='#0d1117', style='dark',
+                elev=75, azim=-90, figsize=(14, 9))
+
+    # 4. Classic wireframe — light mode
+    print("[4/4] Rendering classic wireframe (light)...")
+    render_bird('bird_wireframe_classic.png',
+                bg_color=BG_COLOR_LIGHT, style='light',
+                elev=18, azim=-90, figsize=(14, 9))
+
+    print()
+    print("═══ All renders complete! ═══")
